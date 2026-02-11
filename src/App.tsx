@@ -8,6 +8,11 @@ import Index from "./pages/Index";
 import ChatsPage from "./pages/ChatsPage";
 import FriendsPage from "./pages/FriendsPage";
 import MenuPage from "./pages/MenuPage";
+import ChatDetailPage from "./pages/ChatDetailPage";
+import CreatePredictionPage from "./pages/CreatePredictionPage";
+import LeaderboardPage from "./pages/LeaderboardPage";
+import ActivityPage from "./pages/ActivityPage";
+import RulesPage from "./pages/RulesPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -24,6 +29,11 @@ const App = () => (
             <Route path="/chats" element={<ChatsPage />} />
             <Route path="/friends" element={<FriendsPage />} />
             <Route path="/menu" element={<MenuPage />} />
+            <Route path="/chat/:id" element={<ChatDetailPage />} />
+            <Route path="/chat/:id/create-prediction" element={<CreatePredictionPage />} />
+            <Route path="/chat/:id/leaderboard" element={<LeaderboardPage />} />
+            <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/rules" element={<RulesPage />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -74,6 +74,15 @@ export default {
           navy: "hsl(var(--ck-navy))",
           "navy-light": "hsl(var(--ck-navy-light))",
         },
+        sb: {
+          surface: "hsl(var(--sb-surface))",
+          "surface-hover": "hsl(var(--sb-surface-hover))",
+          "surface-active": "hsl(var(--sb-surface-active))",
+          "bet-green": "hsl(var(--sb-bet-green))",
+          "live-red": "hsl(var(--sb-live-red))",
+          "odds-bg": "hsl(var(--sb-odds-bg))",
+          highlight: "hsl(var(--sb-highlight))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -93,6 +102,7 @@ export default {
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "pulse-glow": "pulse-glow 2s ease-in-out infinite",
       },
     },
   },
