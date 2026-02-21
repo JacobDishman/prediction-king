@@ -22,6 +22,9 @@ ChatKings solves the problem of keeping a group of sports fans engaged and accou
 **Database**
 - PostgreSQL 15
 
+**Authentication**
+- Not yet implemented (planned for a future iteration)
+
 **External Services / APIs**
 - None (live scores are currently mocked; a sports-data API integration is planned)
 
@@ -30,21 +33,31 @@ ChatKings solves the problem of keeping a group of sports fans engaged and accou
 ## 3. Architecture Diagram
 
 ```
-┌─────────────┐         HTTPS / JSON          ┌──────────────────────┐
-│             │ ─── GET /api/chats/:id/msgs ──▶│                      │
-│   Browser   │                                │  Express API Server  │
-│  (React +   │ ◀── 200 OK  [{...messages}] ── │  (Node.js, port 3001)│
-│   Vite)     │                                │                      │
-│  port 5173  │ ─── POST /api/chats/:id/msgs ─▶│                      │
-│             │ ◀── 201 Created  {message} ─── │                      │
-└─────────────┘                                └──────────┬───────────┘
-                                                          │  SQL (pg)
-                                                          ▼
-                                               ┌──────────────────────┐
-                                               │    PostgreSQL DB      │
-                                               │  (port 5432)         │
-                                               │  database: chatkings │
-                                               └──────────────────────┘
+  ┌──────┐  browser interactions
+  │ User │──────────────────────────────────────────────┐
+  └──────┘                                              ▼
+                                           ┌────────────────────────┐
+                                           │  Frontend (Browser)    │
+                                           │  React + Vite          │
+                                           │  port 5173             │
+                                           └───────────┬────────────┘
+                                                       │  HTTP / JSON
+                              GET /api/chats/:id/msgs  │
+                              POST /api/chats/:id/msgs │
+                                                       ▼
+                                           ┌────────────────────────┐
+                                           │  Backend               │
+                                           │  Node.js + Express     │
+                                           │  port 3001             │
+                                           └───────────┬────────────┘
+                                                       │  SQL (pg driver)
+                                                       ▼
+                                           ┌────────────────────────┐
+                                           │  Database              │
+                                           │  PostgreSQL            │
+                                           │  port 5432             │
+                                           │  db: chatkings         │
+                                           └────────────────────────┘
 ```
 
 ---
