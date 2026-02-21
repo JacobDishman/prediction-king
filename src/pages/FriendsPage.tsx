@@ -1,24 +1,134 @@
 import { currentUser, users } from "@/data/mock";
 import { Copy, UserPlus, Check, X, CircleDot } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
 import StrikeBadge from "@/components/StrikeBadge";
 
-const friends = users.filter((u) => u.id !== "u1");
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
-const pendingRequests = [
-  { id: "pr1", name: "Dakota", avatar: "D" },
-  { id: "pr2", name: "Jamie", avatar: "J" },
-];
+// Current user's numeric DB id (mirrors seed: user_id 1 = "You")
+const CURRENT_USER_DB_ID = 1;
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+interface PendingRequest {
+  request_id: number;
+  sender_id: number;
+  sender_name: string;
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 const FriendsPage = () => {
   const [code, setCode] = useState("");
+  const [adding, setAdding] = useState(false);
   const { toast } = useToast();
 
+  // Pending friend requests from the DB
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(true);
+
+  // Friends list — still sourced from mock for the non-wired portions of the app
+  const friends = users.filter((u) => u.id !== "u1");
+
+  // ---- fetch incoming requests on mount ----
+  useEffect(() => {
+    fetch(`${API_BASE}/api/friend-requests/incoming/${CURRENT_USER_DB_ID}`)
+      .then((r) => r.json())
+      .then((data: PendingRequest[]) => {
+        setPendingRequests(data);
+        setLoadingRequests(false);
+      })
+      .catch(() => setLoadingRequests(false));
+  }, []);
+
+  // ---- copy own add code ----
   const copyCode = () => {
     navigator.clipboard.writeText(currentUser.addCode);
     toast({ title: "Copied!", description: "Your add code has been copied." });
+  };
+
+  // ---- send a friend request ----
+  const handleAddFriend = async () => {
+    const trimmedCode = code.trim();
+    if (!trimmedCode || adding) return;
+
+    setAdding(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/friend-requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          senderUserId: CURRENT_USER_DB_ID,
+          addCode: trimmedCode,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        toast({
+          title: "Couldn't send request",
+          description: data.error || "Something went wrong.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Request sent!",
+          description: `Friend request sent to ${data.receiverName}.`,
+        });
+        setCode("");
+      }
+    } catch {
+      toast({
+        title: "Network error",
+        description: "Could not reach the server.",
+        variant: "destructive",
+      });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") handleAddFriend();
+  };
+
+  // ---- accept or decline a request ----
+  const handleRespond = async (requestId: number, action: "accept" | "decline") => {
+    try {
+      const res = await fetch(`${API_BASE}/api/friend-requests/${requestId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+
+      if (res.ok) {
+        // Remove from local list regardless of accept/decline
+        setPendingRequests((prev) => prev.filter((r) => r.request_id !== requestId));
+        toast({
+          title: action === "accept" ? "Friend added!" : "Request declined",
+          description:
+            action === "accept"
+              ? "You are now friends."
+              : "The request has been removed.",
+        });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast({
+          title: "Error",
+          description: data.error || "Could not update request.",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({ title: "Network error", description: "Could not reach the server.", variant: "destructive" });
+    }
   };
 
   return (
@@ -46,15 +156,22 @@ const FriendsPage = () => {
           placeholder="Enter friend's code"
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          className="flex-1 rounded-lg border border-border bg-secondary px-3 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+          onKeyDown={handleKeyDown}
+          disabled={adding}
+          className="flex-1 rounded-lg border border-border bg-secondary px-3 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary disabled:opacity-60"
         />
-        <button className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-colors">
-          <UserPlus className="h-4 w-4" /> Add
+        <button
+          onClick={handleAddFriend}
+          disabled={adding || !code.trim()}
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <UserPlus className="h-4 w-4" />
+          {adding ? "Sending…" : "Add"}
         </button>
       </div>
 
       {/* Pending Requests */}
-      {pendingRequests.length > 0 && (
+      {!loadingRequests && pendingRequests.length > 0 && (
         <div className="mb-5">
           <h3 className="mb-2 font-heading text-xs font-bold uppercase tracking-wider text-muted-foreground">
             Pending Requests
@@ -62,21 +179,27 @@ const FriendsPage = () => {
           <div className="space-y-1.5">
             {pendingRequests.map((req) => (
               <div
-                key={req.id}
+                key={req.request_id}
                 className="flex items-center gap-3 rounded-xl border border-ck-orange/20 bg-card p-3"
               >
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-ck-orange/15 text-ck-orange font-bold text-sm">
-                  {req.avatar}
+                  {req.sender_name.charAt(0).toUpperCase()}
                 </div>
                 <div className="flex-1">
-                  <span className="font-semibold text-sm">{req.name}</span>
+                  <span className="font-semibold text-sm">{req.sender_name}</span>
                   <p className="text-[10px] text-muted-foreground">Wants to be friends</p>
                 </div>
                 <div className="flex gap-1.5">
-                  <button className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary hover:bg-primary/25 transition-colors">
+                  <button
+                    onClick={() => handleRespond(req.request_id, "accept")}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary hover:bg-primary/25 transition-colors"
+                  >
                     <Check className="h-4 w-4" />
                   </button>
-                  <button className="flex h-8 w-8 items-center justify-center rounded-lg bg-ck-red/15 text-ck-red hover:bg-ck-red/25 transition-colors">
+                  <button
+                    onClick={() => handleRespond(req.request_id, "decline")}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-ck-red/15 text-ck-red hover:bg-ck-red/25 transition-colors"
+                  >
                     <X className="h-4 w-4" />
                   </button>
                 </div>

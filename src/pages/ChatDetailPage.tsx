@@ -4,6 +4,7 @@ import { ArrowLeft, Crown, Trophy, Send, Zap, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useRef } from "react";
 import StrikeBadge from "@/components/StrikeBadge";
+import { useToast } from "@/hooks/use-toast";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -18,12 +19,17 @@ interface ApiMessage {
   timestamp: string;
 }
 
+interface LiveBetState {
+  potTotal: number;
+  optionTotals: Record<string, number>; // optionId -> total points wagered
+}
+
 // ---------------------------------------------------------------------------
-// Config — point this at your running backend
+// Config
 // ---------------------------------------------------------------------------
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
-// The current user's numeric DB id (u1 in mock → user_id 1 in DB)
+// Current user's numeric DB id (u1 in mock → user_id 1 in DB)
 const CURRENT_USER_DB_ID = 1;
 
 // ---------------------------------------------------------------------------
@@ -31,69 +37,71 @@ const CURRENT_USER_DB_ID = 1;
 // ---------------------------------------------------------------------------
 const ChatDetailPage = () => {
   const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
 
-  // Chat-level data still driven by mock (unchanged part of the app)
+  // Chat-level data still driven by mock
   const chat = getChatById(id || "");
-  const [msgInput, setMsgInput] = useState("");
-  const [selectedOption, setSelectedOption] = useState<string | null>(null);
-  const [wagerAmount, setWagerAmount] = useState("");
 
-  // ---- message state wired to the backend ----
-  const [messages, setMessages]   = useState<ApiMessage[]>([]);
-  const [loadingMsgs, setLoadingMsgs] = useState(true);
-  const [sending, setSending]     = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [msgInput, setMsgInput]             = useState("");
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [wagerAmount, setWagerAmount]       = useState("");
+
+  // ---- message state ----
+  const [messages, setMessages]           = useState<ApiMessage[]>([]);
+  const [loadingMsgs, setLoadingMsgs]     = useState(true);
+  const [sending, setSending]             = useState(false);
+  const [sendError, setSendError]         = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Numeric chat id used for API calls (mock ids "c1"..."c4" → 1...4)
+  // ---- live bet state (wager totals from DB) ----
+  const [liveBet, setLiveBet]             = useState<LiveBetState | null>(null);
+  const [placingWager, setPlacingWager]   = useState(false);
+
+  // Numeric chat id: "c1" → 1, "c2" → 2, etc.
   const numericChatId = id ? parseInt(id.replace("c", ""), 10) : NaN;
 
-  // ---- fetch messages on mount / when chat changes ----
+  // ---- fetch messages on mount ----
   useEffect(() => {
     if (isNaN(numericChatId)) return;
-
     setLoadingMsgs(true);
     fetch(`${API_BASE}/api/chats/${numericChatId}/messages`)
       .then((r) => r.json())
-      .then((data: ApiMessage[]) => {
-        setMessages(data);
-        setLoadingMsgs(false);
-      })
-      .catch(() => {
-        // Fall back gracefully — the UI still works without messages
-        setLoadingMsgs(false);
-      });
+      .then((data: ApiMessage[]) => { setMessages(data); setLoadingMsgs(false); })
+      .catch(() => setLoadingMsgs(false));
   }, [numericChatId]);
 
-  // Scroll to bottom whenever the message list grows
+  // ---- fetch active bet totals on mount ----
+  useEffect(() => {
+    if (isNaN(numericChatId)) return;
+    fetch(`${API_BASE}/api/chats/${numericChatId}/bets/active`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data) setLiveBet({ potTotal: data.potTotal, optionTotals: data.optionTotals });
+      })
+      .catch(() => {}); // silently fall back to mock totals
+  }, [numericChatId]);
+
+  // ---- scroll to latest message ----
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ---- send a message ----
+  // ---- send a chat message ----
   const handleSend = async () => {
     const text = msgInput.trim();
     if (!text || sending || isNaN(numericChatId)) return;
-
     setSending(true);
     setSendError(null);
-
     try {
       const res = await fetch(`${API_BASE}/api/chats/${numericChatId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: CURRENT_USER_DB_ID,
-          messageText: text,
-          messageType: "user",
-        }),
+        body: JSON.stringify({ userId: CURRENT_USER_DB_ID, messageText: text, messageType: "user" }),
       });
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to send message");
       }
-
       const newMsg: ApiMessage = await res.json();
       setMessages((prev) => [...prev, newMsg]);
       setMsgInput("");
@@ -104,8 +112,44 @@ const ChatDetailPage = () => {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleMsgKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") handleSend();
+  };
+
+  // ---- place a wager ----
+  const handlePlaceWager = async () => {
+    if (!selectedOption || !wagerAmount || placingWager || isNaN(numericChatId)) return;
+    const amount = parseInt(wagerAmount, 10);
+    if (isNaN(amount) || amount <= 0) {
+      toast({ title: "Invalid amount", description: "Enter a positive number of points.", variant: "destructive" });
+      return;
+    }
+
+    setPlacingWager(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/chats/${numericChatId}/bets/active/wagers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: CURRENT_USER_DB_ID, optionId: selectedOption, amount }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        toast({ title: "Wager failed", description: data.error || "Something went wrong.", variant: "destructive" });
+        return;
+      }
+
+      // Update live totals from the server response
+      setLiveBet({ potTotal: data.potTotal, optionTotals: data.optionTotals });
+      setSelectedOption(null);
+      setWagerAmount("");
+      toast({ title: "Wager placed!", description: `${amount} pts on your pick. Good luck!` });
+    } catch {
+      toast({ title: "Network error", description: "Could not reach the server.", variant: "destructive" });
+    } finally {
+      setPlacingWager(false);
+    }
   };
 
   // ---- early return if chat not found ----
@@ -118,29 +162,25 @@ const ChatDetailPage = () => {
     );
   }
 
-  const king          = chat.members.find((m) => m.isKing);
-  const kingUser      = king ? getUserById(king.userId) : null;
-  const myMembership  = chat.members.find((m) => m.userId === currentUser.id);
-  const isKing        = myMembership?.isKing || false;
-  const isLockedOut   = currentUser.strikes >= 3;
-  const prediction    = chat.activePrediction;
+  const king         = chat.members.find((m) => m.isKing);
+  const kingUser     = king ? getUserById(king.userId) : null;
+  const myMembership = chat.members.find((m) => m.userId === currentUser.id);
+  const isKing       = myMembership?.isKing || false;
+  const isLockedOut  = currentUser.strikes >= 3;
+  const prediction   = chat.activePrediction;
 
-  const totalPot = prediction?.options.reduce(
-    (sum, opt) => sum + opt.wagers.reduce((s, w) => s + w.amount, 0),
-    0
-  ) || 0;
+  // Use live pot total from DB when available; fall back to mock sum
+  const totalPot = liveBet?.potTotal
+    ?? prediction?.options.reduce((sum, opt) => sum + opt.wagers.reduce((s, w) => s + w.amount, 0), 0)
+    ?? 0;
 
-  // ---- helpers for rendering API messages ----
+  // ---- render a message from the API ----
   const renderMessage = (msg: ApiMessage) => {
-    const isMe     = msg.user_id === CURRENT_USER_DB_ID;
-    const isSystem = msg.type === "system";
-    const displayName = msg.user_name || "Unknown";
-    // Use first letter of username as avatar
-    const avatarLetter = displayName.charAt(0).toUpperCase();
-    const formattedTime = new Date(msg.timestamp).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const isMe          = msg.user_id === CURRENT_USER_DB_ID;
+    const isSystem      = msg.type === "system";
+    const displayName   = msg.user_name || "Unknown";
+    const avatarLetter  = displayName.charAt(0).toUpperCase();
+    const formattedTime = new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
     if (isSystem) {
       return (
@@ -161,9 +201,7 @@ const ChatDetailPage = () => {
         )}
         <div className={cn("max-w-[75%]", isMe && "items-end")}>
           {!isMe && (
-            <span className="text-[10px] text-muted-foreground mb-0.5 block">
-              {displayName}
-            </span>
+            <span className="text-[10px] text-muted-foreground mb-0.5 block">{displayName}</span>
           )}
           <div
             className={cn(
@@ -175,9 +213,7 @@ const ChatDetailPage = () => {
           >
             {msg.text}
           </div>
-          <span className="text-[9px] text-muted-foreground mt-0.5 block">
-            {formattedTime}
-          </span>
+          <span className="text-[9px] text-muted-foreground mt-0.5 block">{formattedTime}</span>
         </div>
       </div>
     );
@@ -226,15 +262,9 @@ const ChatDetailPage = () => {
           currentUser.strikes === 2 ? "bg-ck-orange/10 text-ck-orange" : "bg-ck-red/10 text-ck-red"
         )}>
           {currentUser.strikes === 3 ? (
-            <>
-              <Lock className="h-3 w-3" />
-              Locked out — predictions disabled until midnight reset
-            </>
+            <><Lock className="h-3 w-3" /> Locked out — predictions disabled until midnight reset</>
           ) : (
-            <>
-              <StrikeBadge strikes={currentUser.strikes} size="sm" showLabel={false} />
-              2 strikes — one more and you're locked out!
-            </>
+            <><StrikeBadge strikes={currentUser.strikes} size="sm" showLabel={false} /> 2 strikes — one more and you're locked out!</>
           )}
         </div>
       )}
@@ -253,21 +283,24 @@ const ChatDetailPage = () => {
           <div className="p-3">
             <p className="font-semibold text-sm mb-3">{prediction.question}</p>
 
+            {/* Option buttons — totals update live from DB after each wager */}
             <div className="flex gap-2 mb-3">
               {prediction.options.map((option) => {
-                const optionTotal = option.wagers.reduce((s, w) => s + w.amount, 0);
+                // Prefer DB-fetched total; fall back to mock sum
+                const optionTotal = liveBet?.optionTotals[option.id]
+                  ?? option.wagers.reduce((s, w) => s + w.amount, 0);
                 const isSelected  = selectedOption === option.id;
                 return (
                   <button
                     key={option.id}
                     onClick={() => !isLockedOut && setSelectedOption(isSelected ? null : option.id)}
-                    disabled={isLockedOut}
+                    disabled={isLockedOut || placingWager}
                     className={cn(
                       "flex-1 flex flex-col items-center gap-1 rounded-lg border py-2.5 px-2 transition-all",
                       isSelected
                         ? "border-primary bg-primary/15 text-primary"
                         : "border-border bg-secondary hover:bg-sb-surface-hover text-foreground",
-                      isLockedOut && "opacity-40 cursor-not-allowed"
+                      (isLockedOut || placingWager) && "opacity-40 cursor-not-allowed"
                     )}
                   >
                     <span className="text-xs font-bold">{option.text}</span>
@@ -277,6 +310,7 @@ const ChatDetailPage = () => {
               })}
             </div>
 
+            {/* Wager input */}
             {selectedOption && !isLockedOut && (
               <div className="flex gap-2">
                 <input
@@ -284,10 +318,15 @@ const ChatDetailPage = () => {
                   placeholder={`Min ${prediction.minWager} pts`}
                   value={wagerAmount}
                   onChange={(e) => setWagerAmount(e.target.value)}
-                  className="flex-1 rounded-lg border border-border bg-secondary px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+                  disabled={placingWager}
+                  className="flex-1 rounded-lg border border-border bg-secondary px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary disabled:opacity-60"
                 />
-                <button className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-colors">
-                  Place
+                <button
+                  onClick={handlePlaceWager}
+                  disabled={placingWager || !wagerAmount}
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {placingWager ? "Placing…" : "Place"}
                 </button>
               </div>
             )}
@@ -326,16 +365,14 @@ const ChatDetailPage = () => {
 
       {/* Message Input */}
       <div className="border-t border-border bg-card px-3 py-2.5">
-        {sendError && (
-          <p className="text-[10px] text-ck-red mb-1">{sendError}</p>
-        )}
+        {sendError && <p className="text-[10px] text-ck-red mb-1">{sendError}</p>}
         <div className="flex gap-2">
           <input
             type="text"
             placeholder="Message..."
             value={msgInput}
             onChange={(e) => setMsgInput(e.target.value)}
-            onKeyDown={handleKeyDown}
+            onKeyDown={handleMsgKeyDown}
             disabled={sending}
             className="flex-1 rounded-lg border border-border bg-secondary px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary disabled:opacity-60"
           />
