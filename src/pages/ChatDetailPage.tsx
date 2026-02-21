@@ -1,18 +1,114 @@
 import { useParams, Link } from "react-router-dom";
-import { getChatById, getUserById, chatMessages, currentUser } from "@/data/mock";
+import { getChatById, getUserById, currentUser } from "@/data/mock";
 import { ArrowLeft, Crown, Trophy, Send, Zap, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import StrikeBadge from "@/components/StrikeBadge";
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+interface ApiMessage {
+  id: number;
+  chat_id: number;
+  user_id: number | null;
+  user_name: string | null;
+  type: "user" | "system" | "prediction";
+  text: string;
+  timestamp: string;
+}
+
+// ---------------------------------------------------------------------------
+// Config — point this at your running backend
+// ---------------------------------------------------------------------------
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
+
+// The current user's numeric DB id (u1 in mock → user_id 1 in DB)
+const CURRENT_USER_DB_ID = 1;
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 const ChatDetailPage = () => {
   const { id } = useParams<{ id: string }>();
+
+  // Chat-level data still driven by mock (unchanged part of the app)
   const chat = getChatById(id || "");
-  const messages = chatMessages[id || ""] || [];
   const [msgInput, setMsgInput] = useState("");
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [wagerAmount, setWagerAmount] = useState("");
 
+  // ---- message state wired to the backend ----
+  const [messages, setMessages]   = useState<ApiMessage[]>([]);
+  const [loadingMsgs, setLoadingMsgs] = useState(true);
+  const [sending, setSending]     = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Numeric chat id used for API calls (mock ids "c1"..."c4" → 1...4)
+  const numericChatId = id ? parseInt(id.replace("c", ""), 10) : NaN;
+
+  // ---- fetch messages on mount / when chat changes ----
+  useEffect(() => {
+    if (isNaN(numericChatId)) return;
+
+    setLoadingMsgs(true);
+    fetch(`${API_BASE}/api/chats/${numericChatId}/messages`)
+      .then((r) => r.json())
+      .then((data: ApiMessage[]) => {
+        setMessages(data);
+        setLoadingMsgs(false);
+      })
+      .catch(() => {
+        // Fall back gracefully — the UI still works without messages
+        setLoadingMsgs(false);
+      });
+  }, [numericChatId]);
+
+  // Scroll to bottom whenever the message list grows
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // ---- send a message ----
+  const handleSend = async () => {
+    const text = msgInput.trim();
+    if (!text || sending || isNaN(numericChatId)) return;
+
+    setSending(true);
+    setSendError(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/chats/${numericChatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: CURRENT_USER_DB_ID,
+          messageText: text,
+          messageType: "user",
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to send message");
+      }
+
+      const newMsg: ApiMessage = await res.json();
+      setMessages((prev) => [...prev, newMsg]);
+      setMsgInput("");
+    } catch (e: unknown) {
+      setSendError(e instanceof Error ? e.message : "Failed to send");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") handleSend();
+  };
+
+  // ---- early return if chat not found ----
   if (!chat) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
@@ -22,17 +118,70 @@ const ChatDetailPage = () => {
     );
   }
 
-  const king = chat.members.find((m) => m.isKing);
-  const kingUser = king ? getUserById(king.userId) : null;
-  const myMembership = chat.members.find((m) => m.userId === currentUser.id);
-  const isKing = myMembership?.isKing || false;
-  const isLockedOut = currentUser.strikes >= 3;
-  const prediction = chat.activePrediction;
+  const king          = chat.members.find((m) => m.isKing);
+  const kingUser      = king ? getUserById(king.userId) : null;
+  const myMembership  = chat.members.find((m) => m.userId === currentUser.id);
+  const isKing        = myMembership?.isKing || false;
+  const isLockedOut   = currentUser.strikes >= 3;
+  const prediction    = chat.activePrediction;
 
   const totalPot = prediction?.options.reduce(
     (sum, opt) => sum + opt.wagers.reduce((s, w) => s + w.amount, 0),
     0
   ) || 0;
+
+  // ---- helpers for rendering API messages ----
+  const renderMessage = (msg: ApiMessage) => {
+    const isMe     = msg.user_id === CURRENT_USER_DB_ID;
+    const isSystem = msg.type === "system";
+    const displayName = msg.user_name || "Unknown";
+    // Use first letter of username as avatar
+    const avatarLetter = displayName.charAt(0).toUpperCase();
+    const formattedTime = new Date(msg.timestamp).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    if (isSystem) {
+      return (
+        <div key={msg.id} className="flex justify-center">
+          <span className="rounded-full bg-secondary px-3 py-1 text-[10px] text-muted-foreground">
+            {msg.text}
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div key={msg.id} className={cn("flex gap-2", isMe && "flex-row-reverse")}>
+        {!isMe && (
+          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-bold text-foreground">
+            {avatarLetter}
+          </div>
+        )}
+        <div className={cn("max-w-[75%]", isMe && "items-end")}>
+          {!isMe && (
+            <span className="text-[10px] text-muted-foreground mb-0.5 block">
+              {displayName}
+            </span>
+          )}
+          <div
+            className={cn(
+              "rounded-xl px-3 py-2 text-sm",
+              isMe
+                ? "bg-primary text-primary-foreground rounded-br-md"
+                : "bg-secondary text-foreground rounded-bl-md"
+            )}
+          >
+            {msg.text}
+          </div>
+          <span className="text-[9px] text-muted-foreground mt-0.5 block">
+            {formattedTime}
+          </span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -104,11 +253,10 @@ const ChatDetailPage = () => {
           <div className="p-3">
             <p className="font-semibold text-sm mb-3">{prediction.question}</p>
 
-            {/* Options as betting buttons */}
             <div className="flex gap-2 mb-3">
               {prediction.options.map((option) => {
                 const optionTotal = option.wagers.reduce((s, w) => s + w.amount, 0);
-                const isSelected = selectedOption === option.id;
+                const isSelected  = selectedOption === option.id;
                 return (
                   <button
                     key={option.id}
@@ -129,7 +277,6 @@ const ChatDetailPage = () => {
               })}
             </div>
 
-            {/* Wager input */}
             {selectedOption && !isLockedOut && (
               <div className="flex gap-2">
                 <input
@@ -163,60 +310,40 @@ const ChatDetailPage = () => {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-        {messages.map((msg) => {
-          const user = getUserById(msg.userId);
-          const isMe = msg.userId === currentUser.id;
-          const isSystem = msg.type === "system";
-
-          if (isSystem) {
-            return (
-              <div key={msg.id} className="flex justify-center">
-                <span className="rounded-full bg-secondary px-3 py-1 text-[10px] text-muted-foreground">
-                  {msg.text}
-                </span>
-              </div>
-            );
-          }
-
-          return (
-            <div key={msg.id} className={cn("flex gap-2", isMe && "flex-row-reverse")}>
-              {!isMe && (
-                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-bold text-foreground">
-                  {user?.avatar}
-                </div>
-              )}
-              <div className={cn("max-w-[75%]", isMe && "items-end")}>
-                {!isMe && (
-                  <span className="text-[10px] text-muted-foreground mb-0.5 block">{user?.name}</span>
-                )}
-                <div
-                  className={cn(
-                    "rounded-xl px-3 py-2 text-sm",
-                    isMe
-                      ? "bg-primary text-primary-foreground rounded-br-md"
-                      : "bg-secondary text-foreground rounded-bl-md"
-                  )}
-                >
-                  {msg.text}
-                </div>
-                <span className="text-[9px] text-muted-foreground mt-0.5 block">{msg.timestamp}</span>
-              </div>
-            </div>
-          );
-        })}
+        {loadingMsgs ? (
+          <div className="flex justify-center pt-8">
+            <span className="text-xs text-muted-foreground">Loading messages…</span>
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="flex justify-center pt-8">
+            <span className="text-xs text-muted-foreground">No messages yet. Say something!</span>
+          </div>
+        ) : (
+          messages.map(renderMessage)
+        )}
+        <div ref={bottomRef} />
       </div>
 
       {/* Message Input */}
       <div className="border-t border-border bg-card px-3 py-2.5">
+        {sendError && (
+          <p className="text-[10px] text-ck-red mb-1">{sendError}</p>
+        )}
         <div className="flex gap-2">
           <input
             type="text"
             placeholder="Message..."
             value={msgInput}
             onChange={(e) => setMsgInput(e.target.value)}
-            className="flex-1 rounded-lg border border-border bg-secondary px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+            onKeyDown={handleKeyDown}
+            disabled={sending}
+            className="flex-1 rounded-lg border border-border bg-secondary px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary disabled:opacity-60"
           />
-          <button className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+          <button
+            onClick={handleSend}
+            disabled={sending || !msgInput.trim()}
+            className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <Send className="h-4 w-4" />
           </button>
         </div>

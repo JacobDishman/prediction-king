@@ -1,73 +1,176 @@
-# Welcome to your Lovable project
+# ChatKings (Prediction King)
 
-## Project info
+## 1. App Summary
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+ChatKings solves the problem of keeping a group of sports fans engaged and accountable around game predictions. The primary user is a sports fan who wants to compete with friends by wagering in-app points on game outcomes. Users join group chats, where one member holds the "King" title and creates predictions for the group to wager on. When a prediction resolves, points are redistributed based on correct picks, and a daily strike system discourages bad-faith behavior. Over time, a leaderboard tracks who has accumulated the most points within each chat, creating an ongoing, season-long competition. The app brings together group chat, live-score context, and prediction wagering into a single mobile-first experience.
 
-## How can I edit this code?
+---
 
-There are several ways of editing your application.
+## 2. Tech Stack
 
-**Use Lovable**
+**Frontend**
+- React 18 with TypeScript
+- Vite (build tool and dev server)
+- Tailwind CSS + shadcn/ui component library
+- React Router v6
+- TanStack React Query
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+**Backend**
+- Node.js (v18+)
+- Express 4
 
-Changes made via Lovable will be committed automatically to this repo.
+**Database**
+- PostgreSQL 15
 
-**Use your preferred IDE**
+**External Services / APIs**
+- None (live scores are currently mocked; a sports-data API integration is planned)
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+---
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+## 3. Architecture Diagram
 
-Follow these steps:
+```
+┌─────────────┐         HTTPS / JSON          ┌──────────────────────┐
+│             │ ─── GET /api/chats/:id/msgs ──▶│                      │
+│   Browser   │                                │  Express API Server  │
+│  (React +   │ ◀── 200 OK  [{...messages}] ── │  (Node.js, port 3001)│
+│   Vite)     │                                │                      │
+│  port 5173  │ ─── POST /api/chats/:id/msgs ─▶│                      │
+│             │ ◀── 201 Created  {message} ─── │                      │
+└─────────────┘                                └──────────┬───────────┘
+                                                          │  SQL (pg)
+                                                          ▼
+                                               ┌──────────────────────┐
+                                               │    PostgreSQL DB      │
+                                               │  (port 5432)         │
+                                               │  database: chatkings │
+                                               └──────────────────────┘
+```
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+---
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+## 4. Prerequisites
 
-# Step 3: Install the necessary dependencies.
-npm i
+| Software | Minimum Version | Verify with | Install |
+|---|---|---|---|
+| Node.js | 18 | `node -v` | https://nodejs.org |
+| npm | 9 | `npm -v` | (bundled with Node) |
+| PostgreSQL | 14 | `psql --version` | https://www.postgresql.org/download/ |
+| psql (CLI) | 14 | `psql --version` | (bundled with PostgreSQL) |
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+Make sure `psql` is available in your system PATH before proceeding.
+
+---
+
+## 5. Installation and Setup
+
+### Clone the repository
+
+```bash
+git clone https://github.com/JacobDishman/prediction-king.git
+cd prediction-king
+```
+
+### Install frontend dependencies
+
+```bash
+npm install
+```
+
+### Install backend dependencies
+
+```bash
+cd server
+npm install
+cd ..
+```
+
+### Create the PostgreSQL database
+
+```bash
+psql -U postgres -c "CREATE DATABASE chatkings;"
+```
+
+### Run the schema and seed scripts
+
+```bash
+psql -U postgres -d chatkings -f db/schema.sql
+psql -U postgres -d chatkings -f db/seed.sql
+```
+
+This creates all 13 tables and populates them with sample users, chats, messages, teams, games, bets, and more.
+
+### Configure environment variables
+
+```bash
+cp server/.env.example server/.env
+```
+
+Open `server/.env` and fill in your PostgreSQL credentials:
+
+```
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=chatkings
+DB_USER=postgres
+DB_PASSWORD=your_password_here
+
+PORT=3001
+FRONTEND_URL=http://localhost:5173
+```
+
+---
+
+## 6. Running the Application
+
+Open two terminal windows from the project root.
+
+**Terminal 1 — Start the backend:**
+
+```bash
+cd server
+npm start
+```
+
+You should see: `ChatKings API running on http://localhost:3001`
+
+**Terminal 2 — Start the frontend:**
+
+```bash
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+You should see: `Local: http://localhost:5173`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+Open **http://localhost:5173** in your browser.
 
-**Use GitHub Codespaces**
+---
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## 7. Verifying the Vertical Slice
 
-## What technologies are used for this project?
+The working feature is **Send Message in a Chat**. It follows a full end-to-end path: the React frontend calls the Express backend, which inserts a row into the `messages` table in PostgreSQL and returns the new message to the UI.
 
-This project is built with:
+### Steps to trigger the feature
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+1. Open http://localhost:5173 in your browser.
+2. Tap **Chats** in the bottom navigation.
+3. Tap any chat (e.g., **NFL Sunday**).
+4. The message history loads from the database (seeded messages appear immediately).
+5. Type any text in the input field at the bottom and press **Enter** or tap the send button.
+6. The new message appears at the bottom of the chat thread instantly.
 
-## How can I deploy this project?
+### Confirm the database was updated
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+In a terminal, query the messages table:
 
-## Can I connect a custom domain to my Lovable project?
+```bash
+psql -U postgres -d chatkings -c "SELECT message_id, user_id, message_text, sent_at FROM messages ORDER BY sent_at DESC LIMIT 5;"
+```
 
-Yes, you can!
+Your new message should appear as the most recent row.
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+### Confirm the change persists after a page refresh
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+1. After sending a message, **refresh the browser** (Cmd+R / Ctrl+R).
+2. Navigate back to the same chat.
+3. Your message is still visible — it was retrieved from the database, not held in memory.
