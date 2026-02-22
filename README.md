@@ -20,7 +20,7 @@ ChatKings solves the problem of keeping a group of sports fans engaged and accou
 - Express 4
 
 **Database**
-- PostgreSQL 15
+- PostgreSQL 14+
 
 **Authentication**
 - Not yet implemented (planned for a future iteration)
@@ -39,11 +39,10 @@ ChatKings solves the problem of keeping a group of sports fans engaged and accou
                                            ┌────────────────────────┐
                                            │  Frontend (Browser)    │
                                            │  React + Vite          │
-                                           │  port 5173             │
+                                           │  port 5173 or 8080*    │
                                            └───────────┬────────────┘
                                                        │  HTTP / JSON
-                              GET /api/chats/:id/msgs  │
-                              POST /api/chats/:id/msgs │
+                                                       │
                                                        ▼
                                            ┌────────────────────────┐
                                            │  Backend               │
@@ -60,6 +59,8 @@ ChatKings solves the problem of keeping a group of sports fans engaged and accou
                                            └────────────────────────┘
 ```
 
+*Vite defaults to 5173 but will use the next available port (e.g. 8080) if 5173 is taken. Check your terminal output for the actual URL.
+
 ---
 
 ## 4. Prerequisites
@@ -71,7 +72,9 @@ ChatKings solves the problem of keeping a group of sports fans engaged and accou
 | PostgreSQL | 14 | `psql --version` | https://www.postgresql.org/download/ |
 | psql (CLI) | 14 | `psql --version` | (bundled with PostgreSQL) |
 
-Make sure `psql` is available in your system PATH before proceeding.
+**Mac:** Make sure `psql` is in your PATH. If installed via Homebrew, run `brew services start postgresql@15` to ensure the service is running.
+
+**Windows:** PostgreSQL installs `psql` at `C:\Program Files\PostgreSQL\<version>\bin\`. Either add that folder to your system PATH or prefix every `psql` command with the full path (e.g. `& "C:\Program Files\PostgreSQL\16\bin\psql.exe"`). Confirm the PostgreSQL service is running in Task Manager → Services.
 
 ---
 
@@ -100,23 +103,30 @@ cd ..
 
 ### Create the PostgreSQL database
 
+**Mac / Linux:**
 ```bash
 psql -U postgres -c "CREATE DATABASE chatkings;"
-```
-
-### Run the schema and seed scripts
-
-```bash
 psql -U postgres -d chatkings -f db/schema.sql
 psql -U postgres -d chatkings -f db/seed.sql
 ```
 
-This creates all 13 tables and populates them with sample users, chats, messages, teams, games, bets, and more.
+**Windows (PowerShell):**
+```powershell
+psql -U postgres -h localhost -c "CREATE DATABASE chatkings;"
+psql -U postgres -h localhost -d chatkings -f db/schema.sql
+psql -U postgres -h localhost -d chatkings -f db/seed.sql
+```
+
+Each command will prompt for your PostgreSQL password. After `seed.sql` you should see a series of `INSERT` confirmations — this means all 13 tables have sample data loaded.
 
 ### Configure environment variables
 
 ```bash
+# Mac / Linux
 cp server/.env.example server/.env
+
+# Windows
+copy server\.env.example server\.env
 ```
 
 Open `server/.env` and fill in your PostgreSQL credentials:
@@ -131,6 +141,8 @@ DB_PASSWORD=your_password_here
 PORT=3001
 FRONTEND_URL=http://localhost:5173
 ```
+
+> **Important:** After starting the frontend (Step 6), check the terminal for the actual Vite URL. If Vite reports `http://localhost:8080` instead of `5173`, update `FRONTEND_URL=http://localhost:8080` in `server/.env` and restart the backend. This ensures CORS is configured correctly.
 
 ---
 
@@ -153,37 +165,53 @@ You should see: `ChatKings API running on http://localhost:3001`
 npm run dev
 ```
 
-You should see: `Local: http://localhost:5173`
+Check the terminal output for the local URL — it will say something like:
 
-Open **http://localhost:5173** in your browser.
+```
+Local: http://localhost:5173
+```
+
+or
+
+```
+Local: http://localhost:8080
+```
+
+Open whichever URL is shown in your browser.
 
 ---
 
 ## 7. Verifying the Vertical Slice
 
-The working feature is **Send Message in a Chat**. It follows a full end-to-end path: the React frontend calls the Express backend, which inserts a row into the `messages` table in PostgreSQL and returns the new message to the UI.
+The working feature is **Send Message in a Chat**. It follows a complete end-to-end path: the React frontend calls the Express backend, which inserts a row into the `messages` table in PostgreSQL and returns the new message to the UI.
 
 ### Steps to trigger the feature
 
-1. Open http://localhost:5173 in your browser.
+1. Open the local URL shown in your terminal (e.g. `http://localhost:5173` or `http://localhost:8080`).
 2. Tap **Chats** in the bottom navigation.
-3. Tap any chat (e.g., **NFL Sunday**).
-4. The message history loads from the database (seeded messages appear immediately).
+3. Tap any chat (e.g. **NFL Sunday**).
+4. Seeded messages load automatically from the database.
 5. Type any text in the input field at the bottom and press **Enter** or tap the send button.
-6. The new message appears at the bottom of the chat thread instantly.
+6. The new message appears immediately at the bottom of the chat thread.
 
 ### Confirm the database was updated
 
 In a terminal, query the messages table:
 
+**Mac / Linux:**
 ```bash
 psql -U postgres -d chatkings -c "SELECT message_id, user_id, message_text, sent_at FROM messages ORDER BY sent_at DESC LIMIT 5;"
+```
+
+**Windows:**
+```powershell
+psql -U postgres -h localhost -d chatkings -c "SELECT message_id, user_id, message_text, sent_at FROM messages ORDER BY sent_at DESC LIMIT 5;"
 ```
 
 Your new message should appear as the most recent row.
 
 ### Confirm the change persists after a page refresh
 
-1. After sending a message, **refresh the browser** (Cmd+R / Ctrl+R).
+1. After sending a message, hard-refresh the browser (Cmd+R on Mac, Ctrl+R on Windows).
 2. Navigate back to the same chat.
 3. Your message is still visible — it was retrieved from the database, not held in memory.
